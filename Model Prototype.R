@@ -73,7 +73,7 @@ P.task.10sample = makeRegrTask(data = sample_frac(PROSPECTOR, .1), target = "Spe
 formula.list <- list(
   gbm.lrn = makeLearner("regr.rpart"),
   lm.lrn = makeLearner("regr.lm"),
-  rf.lrn = makeLearner("regr.randomForest")
+  rf.lrn = makeLearner("regr.randomForest", ntree=300)
   )
 
 # Train models ------------------------------------------------------------
@@ -81,9 +81,9 @@ formula.list <- list(
 parallelStartSocket(4)
 
 resample.setting = makeResampleDesc("CV", iters = 4)
-resample.instance = makeResampleInstance("CV", P.task, iters = 4)
+resample.instance = makeResampleInstance("CV", P.task, iters = 3)
 
-model.list = benchmark(formula.list, P.task.10sample, resample.instance)
+model.list = benchmark(formula.list, P.task.10sample, resample.setting)
 
 # Benchmark models --------------------------------------------------------
 
