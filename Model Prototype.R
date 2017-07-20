@@ -8,8 +8,6 @@ library(purrr)
 library(mlr)
 library(parallelMap)
 
-parallelStartSocket(4)
-
 # Load Data ---------------------------------------------------------------
 
 PROSPECTOR <- read_csv("prepped_set.csv")
@@ -68,26 +66,28 @@ names(PROSPECTOR) <- make.names(names(PROSPECTOR), unique = TRUE)
 
 P.task = makeRegrTask(data = PROSPECTOR, target = "Spend_1.log10")
 
+P.task.10sample = makeRegrTask(data = sample_frac(PROSPECTOR, .1), target = "Spend_1.log10")
+
 # Build learners ----------------------------------------------------------
 
 formula.list <- list(
   gbm.lrn = makeLearner("regr.rpart"),
-  lm.lrn = makeLearner("regr.lm")
+  lm.lrn = makeLearner("regr.lm"),
+  rf.lrn = makeLearner("regr.randomForest")
   )
 
 # Train models ------------------------------------------------------------
 
-resample.setting = makeResampleInstance("CV", iters = 5)
+parallelStartSocket(4)
 
-resample.instance = makeResampleInstance("CV", P.task, iters = 5)
+resample.setting = makeResampleDesc("CV", iters = 4)
+resample.instance = makeResampleInstance("CV", P.task, iters = 4)
 
-# model.list = train(formula.list, P.task)
+model.list = benchmark(formula.list, P.task.10sample, resample.instance)
 
 # Benchmark models --------------------------------------------------------
 
-benchmark.list = benchmark(formula.list, P.task, resample.instance)
-
-getBMRAggrPerformances(benchmark.list,drop = TRUE)
+getBMRAggrPerformances(model.list,drop = TRUE)
 
 # Run predictions ---------------------------------------------------------
 
