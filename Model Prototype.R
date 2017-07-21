@@ -7,6 +7,7 @@ library(magrittr)
 library(purrr)
 library(mlr)
 library(parallelMap)
+library(parallel)
 
 # Machine learning algorithm packages
 library(randomForest)
@@ -78,37 +79,43 @@ PROSPECTOR.log10 <- PROSPECTOR %>%
   mutate(Spend_1.log10 = log10(Spend_1)) %>%
   select(-Spend_1)
 
-
-task.list <- list(
-#  P.task = makeRegrTask(data = PROSPECTOR, target = "Spend_1"),
-#  P.log10.task = makeRegrTask(data = PROSPECTOR.log10, target = "Spend_1.log10"),
-
-  )
-
+# task.list <- list(
+#   P.task = makeRegrTask(data = PROSPECTOR, target = "Spend_1"),
+#   P.log10.task = makeRegrTask(data = PROSPECTOR.log10, target = "Spend_1.log10")
+#   )
 
 P.log10.10sample.task = makeRegrTask(data = sample_frac(PROSPECTOR.log10, .1), target = "Spend_1.log10")
 P.log10.20sample.task = makeRegrTask(data = sample_frac(PROSPECTOR.log10, .2), target = "Spend_1.log10")
 
-# Build learners ----------------------------------------------------------
+# Tune learners -----------------------------------------------------------
+
+
+# Set learners ------------------------------------------------------------
 
 formula.list <- list(
-  rpart.lrn = makeLearner("regr.rpart"),
-  lm.lrn = makeLearner("regr.lm"),
-  glmnet.lrn = makeLearner("regr.glmnet")
+  rpart.lrn = makeLearner("regr.rpart", id = "tree"),
+  lm.lrn = makeLearner("regr.lm", id = "linear reg"),
+  glm.lrn = makeLearner("regr.glm", id = "gen linear reg"),
+  lasso.lrn = makeLearner("regr.glmnet", alpha = 1, id = "lasso"),
+  ridge.lrn = makeLearner("regr.glmnet", alpha = 0, id = "ridge reg"),
+  xgb.lrn = makeLearner("regr.xgboost", id = "xgboost")
   )
 
+rf.lrn <- makeLearner("regr.randomForest", ntree = 300) # randomForests take forever
+
 measures.list = list(mse, rsq, expvar, timeboth)
-  
 
 # Train models ------------------------------------------------------------
-
-parallelStartSocket(4)
 
 CV4.setting = makeResampleDesc("CV", iters = 4)
 CV5.setting = makeResampleDesc("CV", iters = 5)
 #CV4.instance = makeResampleInstance("CV", P.task, iters = 5)
 
-model.list = benchmark(formula.list, P.log10.10sample.task, CV4.setting, measures = measures.list)
+parallelStartSocket(cpus = detectCores())
+
+model.list = benchmark(formula.list, P.log10.20sample.task, CV4.setting, measures = measures.list)
+
+parallelStop()
 
 # Benchmark models --------------------------------------------------------
 
@@ -118,7 +125,6 @@ benchmarks.stored <- mergeBenchmarkResults(list(benchmarks.stored, benchmarks.cu
 
 # Run predictions ---------------------------------------------------------
 
-parallelStop()
 
 # Bin predictions ---------------------------------------------------------
 
