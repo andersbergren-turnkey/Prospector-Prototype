@@ -8,6 +8,18 @@ library(purrr)
 library(mlr)
 library(parallelMap)
 
+# Machine learning algorithm packages
+library(randomForest)
+library(rpart)
+library(MASS)
+library(glmnet)
+library(xgboost)
+library(Cubist)
+library(kknn)
+
+select <- dplyr::select
+
+
 # Load Data ---------------------------------------------------------------
 
 PROSPECTOR <- read_csv("prepped_set.csv")
@@ -57,37 +69,52 @@ PROSPECTOR %<>%
          -`Occupation - Input Individual - Professional / Technical_0`,
          -`Vehicle - Dominant Lifestyle Indicator - Mini-Van Classification_0`,
          -`Vehicle - Dominant Lifestyle Indicator - Truck Classification_0`,
-         -`Vehicle - Dominant Lifestyle Indicator - Regular Classification (Mid-size / Small)_0`) %>%
-  mutate(Spend_1.log10 = log10(Spend_1)) %>%
-  select(-Spend_1)
+         -`Vehicle - Dominant Lifestyle Indicator - Regular Classification (Mid-size / Small)_0`)
 
 names(PROSPECTOR) <- gsub(" ", "_", names(PROSPECTOR))
 names(PROSPECTOR) <- make.names(names(PROSPECTOR), unique = TRUE)
 
-P.task = makeRegrTask(data = PROSPECTOR, target = "Spend_1.log10")
+PROSPECTOR.log10 <- PROSPECTOR %>%
+  mutate(Spend_1.log10 = log10(Spend_1)) %>%
+  select(-Spend_1)
 
-P.task.10sample = makeRegrTask(data = sample_frac(PROSPECTOR, .1), target = "Spend_1.log10")
+
+task.list <- list(
+#  P.task = makeRegrTask(data = PROSPECTOR, target = "Spend_1"),
+#  P.log10.task = makeRegrTask(data = PROSPECTOR.log10, target = "Spend_1.log10"),
+
+  )
+
+
+P.log10.10sample.task = makeRegrTask(data = sample_frac(PROSPECTOR.log10, .1), target = "Spend_1.log10")
+P.log10.20sample.task = makeRegrTask(data = sample_frac(PROSPECTOR.log10, .2), target = "Spend_1.log10")
 
 # Build learners ----------------------------------------------------------
 
 formula.list <- list(
-  gbm.lrn = makeLearner("regr.rpart"),
+  rpart.lrn = makeLearner("regr.rpart"),
   lm.lrn = makeLearner("regr.lm"),
-  rf.lrn = makeLearner("regr.randomForest", ntree=300)
+  glmnet.lrn = makeLearner("regr.glmnet")
   )
+
+measures.list = list(mse, rsq, expvar, timeboth)
+  
 
 # Train models ------------------------------------------------------------
 
 parallelStartSocket(4)
 
-resample.setting = makeResampleDesc("CV", iters = 4)
-resample.instance = makeResampleInstance("CV", P.task, iters = 3)
+CV4.setting = makeResampleDesc("CV", iters = 4)
+CV5.setting = makeResampleDesc("CV", iters = 5)
+#CV4.instance = makeResampleInstance("CV", P.task, iters = 5)
 
-model.list = benchmark(formula.list, P.task.10sample, resample.setting)
+model.list = benchmark(formula.list, P.log10.10sample.task, CV4.setting, measures = measures.list)
 
 # Benchmark models --------------------------------------------------------
 
-getBMRAggrPerformances(model.list,drop = TRUE)
+benchmarks.current <- getBMRAggrPerformances(model.list, as.df = TRUE)
+
+benchmarks.stored <- mergeBenchmarkResults(list(benchmarks.stored, benchmarks.current))
 
 # Run predictions ---------------------------------------------------------
 
