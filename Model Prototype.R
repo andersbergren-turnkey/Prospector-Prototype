@@ -29,8 +29,6 @@ PROSPECTOR <- read_csv("prepped_set.csv")
 
 PROSPECTOR %<>%
   select(-X1,
-         -ProspectID,
-         -bin_num,
          -`Apparel - Female Apparel MOB's_0`,
          -`Apparel - Male Apparel MOB's_0`,
          -`Upscale Card Holder_0`,
@@ -75,19 +73,31 @@ PROSPECTOR %<>%
 names(PROSPECTOR) <- gsub(" ", "_", names(PROSPECTOR))
 names(PROSPECTOR) <- make.names(names(PROSPECTOR), unique = TRUE)
 
-PROSPECTOR.log10 <- PROSPECTOR %>%
-  mutate(Spend_1.log10 = log10(Spend_1)) %>%
-  select(-Spend_1)
+PROSPECTOR %<>%
+  mutate(Spend_1.log10 = log10(Spend_1))
 
 # task.list <- list(
-#   P.task = makeRegrTask(data = PROSPECTOR, target = "Spend_1"),
-#   P.log10.task = makeRegrTask(data = PROSPECTOR.log10, target = "Spend_1.log10")
+#   P.task = makeRegrTask(data = PROSPECTOR %>% select(-ProspectID,-binnum,-Spend_1.log10), target = "Spend_1"),
+#   P.log10.task = makeRegrTask(data = PROSPECTOR %>% select(-ProspectID,-binnum,-Spend_1), target = "Spend_1.log10")
 #   )
 
-P.log10.10sample.task = makeRegrTask(data = sample_frac(PROSPECTOR.log10, .1), target = "Spend_1.log10")
-P.log10.20sample.task = makeRegrTask(data = sample_frac(PROSPECTOR.log10, .2), target = "Spend_1.log10")
+P.log10.10sample.task = makeRegrTask(data = PROSPECTOR %>% 
+                                       select(-ProspectID,-bin_num,-Spend_1) %>%
+                                       sample_frac(.1),
+                                     target = "Spend_1.log10")
+P.log10.20sample.task = makeRegrTask(data = PROSPECTOR %>%
+                                       select(-ProspectID,-bin_num,-Spend_1) %>%
+                                       sample_frac(.2),
+                                     target = "Spend_1.log10")
+
+P.log10.task = makeRegrTask(data = PROSPECTOR %>%
+                              select(-ProspectID,-bin_num,-Spend_1),
+                            target = "Spend_1.log10")
+
+current.task <- P.log10.task
 
 # Tune learners -----------------------------------------------------------
+
 
 
 # Set learners ------------------------------------------------------------
@@ -95,13 +105,14 @@ P.log10.20sample.task = makeRegrTask(data = sample_frac(PROSPECTOR.log10, .2), t
 formula.list <- list(
   rpart.lrn = makeLearner("regr.rpart", id = "tree"),
   lm.lrn = makeLearner("regr.lm", id = "linear reg"),
-  glm.lrn = makeLearner("regr.glm", id = "gen linear reg"),
   lasso.lrn = makeLearner("regr.glmnet", alpha = 1, id = "lasso"),
   ridge.lrn = makeLearner("regr.glmnet", alpha = 0, id = "ridge reg"),
+  knn.lrn = makeLearner("regr.fnn", id = "knn"),
   xgb.lrn = makeLearner("regr.xgboost", id = "xgboost")
   )
 
-rf.lrn <- makeLearner("regr.randomForest", ntree = 300) # randomForests take forever
+xgb.lrn = makeLearner("regr.xgboost", id = "xgboost")
+rf.lrn <- makeLearner("regr.randomForest", ntree = 300, id = "random forest")
 
 measures.list = list(mse, rsq, expvar, timeboth)
 
@@ -113,7 +124,7 @@ CV5.setting = makeResampleDesc("CV", iters = 5)
 
 parallelStartSocket(cpus = detectCores())
 
-model.list = benchmark(formula.list, P.log10.20sample.task, CV4.setting, measures = measures.list)
+model.list = benchmark(formula.list, current.task, CV4.setting, measures = measures.list)
 
 parallelStop()
 
@@ -121,11 +132,39 @@ parallelStop()
 
 benchmarks.current <- getBMRAggrPerformances(model.list, as.df = TRUE)
 
-benchmarks.stored <- mergeBenchmarkResults(list(benchmarks.stored, benchmarks.current))
+print(benchmarks.current)
+
+if (exists("benchmarks.stored")) {
+  benchmarks.stored <- mergeBenchmarkResults(list(benchmarks.stored, benchmarks.current))
+} else {
+  benchmarks.stored <- benchmarks.current
+}
+
+# Select model ------------------------------------------------------------
+
+# find lowest mse model and extract learner id (change benchmarks to list for learner extraction)
+selected.model <- benchmarks.stored %>%
+  filter(mse.test.mean == min(mse.test.mean)) %>%
+  pull(learner.id) %>%
+  as.character()
 
 # Run predictions ---------------------------------------------------------
 
+parallelStartSocket(cpus = detectCores())
+
+model.final = train(formula.list[[match(selected.model, map_chr(formula.list,getLearnerId))]], current.task)
+
+PROSPECTOR.prediction <- bind_cols(PROSPECTOR, as.data.frame(predict(model.final, task = current.task)))
+
+parallelStop()
+
+# make predictions on total dataset
 
 # Bin predictions ---------------------------------------------------------
 
+# replicate binning from Python and compare to actual
 
+PROSPECTOR.prediction %<>%
+  mutate(Spend_1.predicted = 10^response)
+
+summary(PROSPECTOR.prediction$Spend_1.predicted)
