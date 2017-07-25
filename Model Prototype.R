@@ -12,7 +12,6 @@ library(parallel)
 # Machine learning algorithm packages
 library(randomForest)
 library(rpart)
-library(MASS)
 library(glmnet)
 library(xgboost)
 library(Cubist)
@@ -25,7 +24,7 @@ select <- dplyr::select
 
 PROSPECTOR <- read_csv("prepped_set.csv")
 
-# Build tasks -------------------------------------------
+# Prepare data ------------------------------------------------------------
 
 PROSPECTOR %<>%
   select(-X1,
@@ -76,10 +75,7 @@ names(PROSPECTOR) <- make.names(names(PROSPECTOR), unique = TRUE)
 PROSPECTOR %<>%
   mutate(Spend_1.log10 = log10(Spend_1))
 
-# task.list <- list(
-#   P.task = makeRegrTask(data = PROSPECTOR %>% select(-ProspectID,-binnum,-Spend_1.log10), target = "Spend_1"),
-#   P.log10.task = makeRegrTask(data = PROSPECTOR %>% select(-ProspectID,-binnum,-Spend_1), target = "Spend_1.log10")
-#   )
+# Build tasks -------------------------------------------
 
 P.log10.10sample.task = makeRegrTask(data = PROSPECTOR %>% 
                                        select(-ProspectID,-bin_num,-Spend_1) %>%
@@ -94,7 +90,13 @@ P.log10.task = makeRegrTask(data = PROSPECTOR %>%
                               select(-ProspectID,-bin_num,-Spend_1),
                             target = "Spend_1.log10")
 
-current.task <- P.log10.task
+P.task = makeRegrTask(data = PROSPECTOR %>%
+                              select(-ProspectID,-bin_num,-Spend_1.log10),
+                            target = "Spend_1")
+
+task.list <- list(P.log10.task)
+
+current.task <- task.list
 
 # Tune learners -----------------------------------------------------------
 
@@ -103,18 +105,12 @@ current.task <- P.log10.task
 # Set learners ------------------------------------------------------------
 
 formula.list <- list(
-  rpart.lrn = makeLearner("regr.rpart", id = "tree"),
   lm.lrn = makeLearner("regr.lm", id = "linear reg"),
-  lasso.lrn = makeLearner("regr.glmnet", alpha = 1, id = "lasso"),
   ridge.lrn = makeLearner("regr.glmnet", alpha = 0, id = "ridge reg"),
-  knn.lrn = makeLearner("regr.fnn", id = "knn"),
-  xgb.lrn = makeLearner("regr.xgboost", id = "xgboost")
+  xgb.lrn = makeLearner("regr.xgboost", nthread = detectCores(), max_depth = 6, eta = .3,nrounds = 200, id = "xgboost")
   )
 
-xgb.lrn = makeLearner("regr.xgboost", id = "xgboost")
-rf.lrn <- makeLearner("regr.randomForest", ntree = 300, id = "random forest")
-
-measures.list = list(mse, rsq, expvar, timeboth)
+measures.list = list(mse, rmse, rsq, expvar, timeboth)
 
 # Train models ------------------------------------------------------------
 
@@ -124,7 +120,7 @@ CV5.setting = makeResampleDesc("CV", iters = 5)
 
 parallelStartSocket(cpus = detectCores())
 
-model.list = benchmark(formula.list, current.task, CV4.setting, measures = measures.list)
+model.list = benchmark(formula.list, current.task, CV5.setting, measures = measures.list)
 
 parallelStop()
 
@@ -135,7 +131,7 @@ benchmarks.current <- getBMRAggrPerformances(model.list, as.df = TRUE)
 print(benchmarks.current)
 
 if (exists("benchmarks.stored")) {
-  benchmarks.stored <- mergeBenchmarkResults(list(benchmarks.stored, benchmarks.current))
+  benchmarks.stored <- bind_rows(benchmarks.stored, benchmarks.current)
 } else {
   benchmarks.stored <- benchmarks.current
 }
@@ -165,6 +161,11 @@ parallelStop()
 # replicate binning from Python and compare to actual
 
 PROSPECTOR.prediction %<>%
-  mutate(Spend_1.predicted = 10^response)
+  mutate(Spend_1.predicted = 10^response) %>%
+  mutate(bin_num.predicted = ntile(Spend_1.predicted, 5)) %>%
+  mutate(bun_num.correct = bin_num == bin_num.predicted)
 
-summary(PROSPECTOR.prediction$Spend_1.predicted)
+summary(PROSPECTOR.prediction$bun_num.correct)
+
+xtabs(data = PROSPECTOR.prediction, formula = ~ bin_num.predicted + bin_num)
+
