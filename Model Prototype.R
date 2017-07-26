@@ -1,6 +1,7 @@
 # Install and Load Packages ----------------------------------------------------------
 
 library(tidyverse)
+library(lubridate)
 library(modelr)
 library(broom)
 library(magrittr)
@@ -126,15 +127,21 @@ parallelStop()
 
 # Benchmark models --------------------------------------------------------
 
-benchmarks.current <- getBMRAggrPerformances(model.list, as.df = TRUE)
+benchmarks.current <- getBMRAggrPerformances(model.list, as.df = TRUE) %>%
+  mutate(run.date = now())
 
 print(benchmarks.current)
 
-if (exists("benchmarks.stored")) {
-  benchmarks.stored <- bind_rows(benchmarks.stored, benchmarks.current)
+# Save benchmark results --------------------------------------------------
+
+if (file.exists("benchmarks.stored.csv")) {
+  benchmarks.stored <- read_csv(file = "benchmarks.stored.csv") %>% 
+    bind_rows(benchmarks.current)
 } else {
   benchmarks.stored <- benchmarks.current
 }
+
+write_csv(benchmarks.stored, path = "benchmarks.stored.csv")
 
 # Select model ------------------------------------------------------------
 
