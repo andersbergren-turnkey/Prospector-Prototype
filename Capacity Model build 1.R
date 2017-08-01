@@ -4,6 +4,7 @@
 library(tidyverse)
 library(lubridate)
 library(magrittr)
+library(forcats)
 library(mlr)
 library(parallelMap)
 library(parallel)
@@ -182,7 +183,7 @@ ORIGINAL %<>%
 # Create log spend variables
 
 ORIGINAL %<>%
-  mutate(Spend_1.log = log(Spend_1))
+  mutate(Spend_1.log = log10(Spend_1))
 
 # Remove outliers (same, can this be a tuner preprocess)
 
@@ -217,11 +218,15 @@ task.wrpr <- function(task) {
     normalizeFeatures()
 }
 
+# NA_Remove_Threshold <- .4 #typically 0.3-0.5
+# 
+# ORIGINAL %<>%
+#   select_if(funs(mean(is.na(.)) < NA_Remove_Threshold))
+
 # Set task
 
 O.log.task = task.wrpr(makeRegrTask(data = ORIGINAL %>%
-                                      select(-Spend_1) %>%
-                                      sample_frac(size = .2),
+                                      select(-Spend_1),
                                     target = "Spend_1.log",
                                     id = "Log of Spend, original"))
 
@@ -232,10 +237,23 @@ O.log.task = task.wrpr(makeRegrTask(data = ORIGINAL %>%
 
 # Build Learners ----------------------------------------------------------
 
-### Set imputation wrapper ###
+### Set NA remove and imputation wrapper ###
+
+trainRemoveNA <- function(data,target,args){
+  
+}
+
+predictRemoveNA<- function(data,target,args,control){
+  
+}
+
 
 lrnr.wrpr <- function (lrnr) {
   lrnr %>%
+    # makePreprocWrapper(trainRemoveNA,
+    #                    predictRemoveNA,
+    #                    par.set = makeParamSet(),
+    #                    par.vals = list()) %>%
     makePreprocWrapperCaret(ppc.medianImpute = TRUE)
 }
 
@@ -245,6 +263,7 @@ lrnr.wrpr <- function (lrnr) {
 xgb.lrn <- lrnr.wrpr(makeLearner(
   "regr.xgboost",
   nthread = detectCores(),
+  nrounds = 200,
   id = "xgboost"
 ))
 
@@ -252,7 +271,7 @@ xgb.lrn <- lrnr.wrpr(makeLearner(
 glmnet.lrn <- lrnr.wrpr(makeLearner("regr.glmnet",
                                     id = "ridge / lasso"))
 
-# adaptive splines (earth)
+# adaptive splines
 aspline.lrn <- lrnr.wrpr(makeLearner("regr.earth",
                                      id = "adaptive splines"))
 
@@ -302,10 +321,16 @@ xgb.tune <- tuneParams(learner = xgb.lrn,
 parallelStop()
 
 # Save out tuned params
-saveRDS(xgb.tune, file = "xgb.tune.rds")
+save_tuning <- TRUE
+if (save_tuning) {
+  saveRDS(xgb.tune, file = "xgb.tune.rds")
+}
 
 # Import tuned params
-xgb.tune <- readRDS(file = "xgb.tune.rds")
+import_tuning <- TRUE
+if (import_tuning) {
+  xgb.tune <- readRDS(file = "xgb.tune.rds")
+}
 
 # Set tuned learner
 xgb.tuned.lrn <- setHyperPars(xgb.lrn, par.vals = xgb.tune$x)
@@ -344,7 +369,7 @@ learners.list <- list(xgb.tuned.lrn)
 tasks.list <- list(O.log.task)
 
 # Set measures
-measures.list <- list(train.rmse, test.rmse, rsq, timeboth)
+measures.list <- list(mse, rmse, rsq, timeboth)
 
 # Set cross validation
 CV.model_setting = makeResampleDesc("CV", iters = 5)
@@ -400,8 +425,24 @@ parallelStop()
 
 PREDICTION %<>%
   mutate(Spend_1.predicted = 10^response) %>%
-  mutate(bin_num.predicted = ntile(response, 5)) %>%
-  mutate(bin_num.actual = ntile(truth, 5))
+  mutate(bin_num.20.40.60.80.predicted = factor(ntile(response, 5))) %>%
+  mutate(bin_num.20.40.60.80.actual = factor(ntile(truth, 5))) %>%
+  mutate(bin_num.30.60.80.90.predicted = factor(ntile(response, 10))) %>%
+  mutate(bin_num.30.60.80.90.predicted = fct_collapse(bin_num.30.60.80.90.predicted,
+                                                    "1" = c("1","2","3"),
+                                                    "2" = c("4","5","6"),
+                                                    "3" = c("7","8"),
+                                                    "4" = "9",
+                                                    "5" = "10")) %>%
+  mutate(bin_num.30.60.80.90.actual = factor(ntile(truth, 10))) %>%
+  mutate(bin_num.30.60.80.90.actual = fct_collapse(bin_num.30.60.80.90.actual,
+                                                    "1" = c("1","2","3"),
+                                                    "2" = c("4","5","6"),
+                                                    "3" = c("7","8"),
+                                                    "4" = "9",
+                                                    "5" = "10")) %>%
+  mutate(bin_num.percentile.predicted = factor(ntile(truth, 100))) %>%
+  mutate(bin_num.percentile.actual = factor(ntile(truth, 100)))
 
 bin_accuarrcy_table <- xtabs(data = PREDICTION, formula = ~ bin_num.predicted + bin_num.actual)
 print(bin_accuarrcy_table)
