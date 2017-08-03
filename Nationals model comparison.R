@@ -3,8 +3,9 @@ ggplot(PREDICTION,aes(response)) +
   xlim(c(0,5)) +
   ylim(c(0,30000))
 
-ggplot(PREDICTION,aes(Spend_1.predicted)) +
-  geom_histogram(binwidth = 5) +
+ggplot(ORIGINAL,aes(Spend_1)) +
+  geom_histogram() +
+  scale_x_log10()
   coord_cartesian(xlim = c(0,400))
 
 ggplot(PREDICTION,aes(Spend_1)) +
@@ -32,3 +33,9 @@ ggplot(PREDICTION,aes(y = Spend_1, x = factor(bin_num.percentile.predicted))) +
   stat_summary(fun.y = "mean", geom = "bar") +
   scale_x_discrete(breaks = seq(0,100,5)) +
   coord_cartesian(ylim = c(0,500))
+
+ggplot(PREDICTION, aes(Spend_1,Spend_1.predicted)) +
+  geom_point(alpha = .01) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_smooth(method = "lm")

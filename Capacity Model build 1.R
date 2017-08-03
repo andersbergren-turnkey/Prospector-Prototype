@@ -254,7 +254,7 @@ lrnr.wrpr <- function (lrnr) {
     #                    predictRemoveNA,
     #                    par.set = makeParamSet(),
     #                    par.vals = list()) %>%
-    makePreprocWrapperCaret(ppc.medianImpute = TRUE)
+    makePreprocWrapperCaret(ppc.medianImpute = TRUE) #Add factor mode impute with dummy variable creation eventually
 }
 
 ### Set learners ###
@@ -340,23 +340,6 @@ xgb.tuned.lrn <- setHyperPars(xgb.lrn, par.vals = xgb.tune$x)
 
 
 ### ridge regression / lasso tuning ###
-
-# params <- makeParamSet(makeIntegerParam("alpha",lower = 0,upper = 1))
-# 
-# ctrl <- makeTuneControlRandom(maxit = 15L)
-
-# Run tuning
-parallelStartSocket(cpus = detectCores())
-
-xgb.tune <- tuneParams(learner = xgb.lrn,
-                       task = O.log.task,
-                       resampling = CV.setting,
-                       measures = rmse,
-                       par.set = params,
-                       control = ctrl,
-                       show.info = TRUE)
-
-parallelStop()
 
 # Train models ------------------------------------------------------------
 
@@ -447,8 +430,8 @@ PREDICTION %<>%
 bin_accuarrcy_table <- xtabs(data = PREDICTION, formula = ~ bin_num.predicted + bin_num.actual)
 print(bin_accuarrcy_table)
 
-bin_mse <- mean((PREDICTION[["bin_num.actual"]] - PREDICTION[["bin_num.predicted"]])^2)
+bin_mse <- mean((as.numeric(PREDICTION[["bin_num.30.60.80.90.actual"]]) - as.numeric(PREDICTION[["bin_num.30.60.80.90.predicted"]]))^2)
 print(bin_mse)
 
-bin_rmse <- sqrt(mean((PREDICTION[["bin_num.actual"]] - PREDICTION[["bin_num.predicted"]])^2))
+bin_rmse <- sqrt(mean((as.numeric(PREDICTION[["bin_num.30.60.80.90.actual"]]) - as.numeric(PREDICTION[["bin_num.30.60.80.90.predicted"]]))^2))
 print(bin_rmse)
