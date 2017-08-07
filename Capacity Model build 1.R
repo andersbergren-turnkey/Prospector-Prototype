@@ -214,6 +214,8 @@ task.wrpr <- function(task) {
   task %>%
     removeConstantFeatures(perc = .05) %>%
     mergeSmallFactorLevels(min.perc = .05) %>%
+    impute(classes = list(numeric = imputeMedian(), integer = imputeMedian(), factor = imputeMode())) %>%
+    .[[1]] %>%
     createDummyFeatures() %>%
     normalizeFeatures()
 }
@@ -266,12 +268,17 @@ lrnr.wrpr <- function (lrnr) {
 ### Set learners ###
 
 # xgboost
-xgb.lrn <- lrnr.wrpr(makeLearner(
+xgb.knnimpute.lrn <- lrnr.wrpr(makeLearner(
   "regr.xgboost",
   nthread = detectCores(),
 #  nrounds = 200,
-  id = "xgboost"
+  id = "xgboost.impute"
 ))
+
+xgb.lrn <- makeLearner(
+  "regr.xgboost",
+  nthread = detectCores(),
+  id = "xgboost")
 
 # ridge regression / lasso
 glmnet.lrn <- lrnr.wrpr(makeLearner("regr.glmnet",
@@ -316,8 +323,8 @@ params <- makeParamSet(makeIntegerParam("max_depth",lower = 3L,upper = 10L),
 
 # try a seperate gamma tuning after params are established
 
-ctrl.grid <- makeTuneControlGrid(resolution = 3L)
-ctrl.rand <- makeTuneControlRandom(maxit = 5000)
+ctrl.grid <- makeTuneControlGrid(resolution = 2L)
+ctrl.rand <- makeTuneControlRandom(maxit = 5)
 
 # Run tuning
 parallelStartSocket(cpus = detectCores())
@@ -339,7 +346,7 @@ if (save_tuning) {
 }
 
 # Import tuned params
-import_tuning <- FALSE
+import_tuning <- TRUE
 if (import_tuning) {
   xgb.tune <- readRDS(file = "xgb.tune.rds")
 }
@@ -437,7 +444,9 @@ PREDICTION %<>%
                                                     "4" = "9",
                                                     "5" = "10")) %>%
   mutate(bin_num.percentile.predicted = factor(ntile(truth, 100))) %>%
-  mutate(bin_num.percentile.actual = factor(ntile(truth, 100)))
+  mutate(bin_num.percentile.actual = factor(ntile(truth, 100))) %>%
+  mutate(bin_num.5percentile.predicted = factor(ntile(truth, 20))) %>%
+  mutate(bin_num.5percentile.actual = factor(ntile(truth, 20)))
 
 bin_accuarrcy_table <- xtabs(data = PREDICTION, formula = ~ bin_num.predicted + bin_num.actual)
 print(bin_accuarrcy_table)
