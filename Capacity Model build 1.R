@@ -218,15 +218,21 @@ task.wrpr <- function(task) {
     normalizeFeatures()
 }
 
-# NA_Remove_Threshold <- .4 #typically 0.3-0.5
-# 
-# ORIGINAL %<>%
-#   select_if(funs(mean(is.na(.)) < NA_Remove_Threshold))
+NA_Remove_Threshold <- .3 #typically 0.3-0.5
+
+ORIGINAL %<>%
+  select_if(funs(mean(is.na(.)) < NA_Remove_Threshold))
 
 # Set task
 
 O.log.task = task.wrpr(makeRegrTask(data = ORIGINAL %>%
                                       select(-Spend_1),
+                                    target = "Spend_1.log",
+                                    id = "Log of Spend, original"))
+
+O.020.log.task = task.wrpr(makeRegrTask(data = ORIGINAL %>%
+                                      select(-Spend_1) %>%
+                                      sample_frac(size = .2),
                                     target = "Spend_1.log",
                                     id = "Log of Spend, original"))
 
@@ -239,13 +245,13 @@ O.log.task = task.wrpr(makeRegrTask(data = ORIGINAL %>%
 
 ### Set NA remove and imputation wrapper ###
 
-trainRemoveNA <- function(data,target,args){
-  
-}
-
-predictRemoveNA<- function(data,target,args,control){
-  
-}
+# trainRemoveNA <- function(data,target,args){
+#   
+# }
+# 
+# predictRemoveNA<- function(data,target,args,control){
+#   
+# }
 
 
 lrnr.wrpr <- function (lrnr) {
@@ -254,7 +260,7 @@ lrnr.wrpr <- function (lrnr) {
     #                    predictRemoveNA,
     #                    par.set = makeParamSet(),
     #                    par.vals = list()) %>%
-    makePreprocWrapperCaret(ppc.medianImpute = TRUE) #Add factor mode impute with dummy variable creation eventually
+    makePreprocWrapperCaret(ppc.knnImpute = TRUE) #Add factor mode impute with dummy variable creation eventually
 }
 
 ### Set learners ###
@@ -263,7 +269,7 @@ lrnr.wrpr <- function (lrnr) {
 xgb.lrn <- lrnr.wrpr(makeLearner(
   "regr.xgboost",
   nthread = detectCores(),
-  nrounds = 200,
+#  nrounds = 200,
   id = "xgboost"
 ))
 
@@ -293,9 +299,11 @@ rf.lrn <- makeLearner("regr.randomForestSRC",
 # Tune Learners (Do not run unless tuning) -----------------------------------------------------------
 
 ### Set cross validation ###
-CV.tune_setting = makeResampleDesc("CV", iters = 4)
+CV.tune_setting = makeResampleDesc("CV", iters = 3)
 
 ### xgboost tuning ### (only run overnight)
+
+# Try a seperate nrounds tuning prior to tuning other params
 
 #  Set parameter search space
 params <- makeParamSet(makeIntegerParam("max_depth",lower = 3L,upper = 10L),
@@ -303,9 +311,13 @@ params <- makeParamSet(makeIntegerParam("max_depth",lower = 3L,upper = 10L),
                        makeNumericParam("subsample",lower = 0.5,upper = 1),
                        makeNumericParam("eta",lower = 0.01,upper = 0.3),
                        makeNumericParam("colsample_bytree",lower = 0.5,upper = 1),
-                       makeNumericParam("nrounds",lower = 50,upper = 400))
+                       makeIntegerParam("nrounds",lower = 100L,upper = 400L),
+                       makeDiscreteParam("gamma",values = c(0,.1,.2)))
 
-ctrl <- makeTuneControlRandom(maxit = 50L)
+# try a seperate gamma tuning after params are established
+
+ctrl.grid <- makeTuneControlGrid(resolution = 3L)
+ctrl.rand <- makeTuneControlRandom(maxit = 5000)
 
 # Run tuning
 parallelStartSocket(cpus = detectCores())
@@ -315,7 +327,7 @@ xgb.tune <- tuneParams(learner = xgb.lrn,
                        resampling = CV.tune_setting,
                        measures = rmse,
                        par.set = params,
-                       control = ctrl,
+                       control = ctrl.rand,
                        show.info = TRUE)
 
 parallelStop()
@@ -327,7 +339,7 @@ if (save_tuning) {
 }
 
 # Import tuned params
-import_tuning <- TRUE
+import_tuning <- FALSE
 if (import_tuning) {
   xgb.tune <- readRDS(file = "xgb.tune.rds")
 }
