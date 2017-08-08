@@ -8,6 +8,7 @@ library(forcats)
 library(mlr)
 library(parallelMap)
 library(parallel)
+library(mice)
 
 # Load data ---------------------------------------------------------------
 
@@ -175,7 +176,7 @@ ORIGINAL %<>%
 
 # Remove NA variables below threshold (can this be converted to tuner preprocessing for interation)
 
-NA_Remove_Threshold <- .4 #typically 0.3-0.5
+NA_Remove_Threshold <- .3 #typically 0.3-0.5
 
 ORIGINAL %<>%
   select_if(funs(mean(is.na(.)) < NA_Remove_Threshold))
@@ -210,6 +211,16 @@ ORIGINAL %<>%
 
 # Set preprocessing steps in a task wrapper
 
+task.rpart.wrpr <- function(task) {
+  task %>%
+    removeConstantFeatures(perc = .05) %>%
+    mergeSmallFactorLevels(min.perc = .05) %>%
+    impute(classes = list(numeric = imputeLearner("regr.rpart"), integer = imputeLearner("classif.rpart"), factor = imputeLearner("classif.rpart"))) %>%
+    .[[1]] %>%
+    createDummyFeatures() %>%
+    normalizeFeatures()
+}
+
 task.wrpr <- function(task) {
   task %>%
     removeConstantFeatures(perc = .05) %>%
@@ -220,17 +231,17 @@ task.wrpr <- function(task) {
     normalizeFeatures()
 }
 
-NA_Remove_Threshold <- .3 #typically 0.3-0.5
-
-ORIGINAL %<>%
-  select_if(funs(mean(is.na(.)) < NA_Remove_Threshold))
-
 # Set task
 
 O.log.task = task.wrpr(makeRegrTask(data = ORIGINAL %>%
                                       select(-Spend_1),
                                     target = "Spend_1.log",
                                     id = "Log of Spend, original"))
+
+O.rpart.log.task = task.rpart.wrpr(makeRegrTask(data = ORIGINAL %>%
+                                      select(-Spend_1),
+                                    target = "Spend_1.log",
+                                    id = "Log of Spend, original, rpart"))
 
 O.020.log.task = task.wrpr(makeRegrTask(data = ORIGINAL %>%
                                       select(-Spend_1) %>%
@@ -368,7 +379,7 @@ xgb.tuned.lrn <- setHyperPars(xgb.lrn, par.vals = xgb.tune$x)
 learners.list <- list(xgb.tuned.lrn)
 
 # Set tasks
-tasks.list <- list(O.log.task)
+tasks.list <- list(O.log.task, O.rpart.log.task)
 
 # Set measures
 measures.list <- list(mse, rmse, rsq, timeboth)

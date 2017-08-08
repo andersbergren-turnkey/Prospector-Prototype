@@ -39,3 +39,5 @@ ggplot(PREDICTION, aes(Spend_1,Spend_1.predicted)) +
   scale_x_log10() +
   scale_y_log10() +
   geom_smooth(method = "lm")
+
+xtabs(data = PREDICTION)
