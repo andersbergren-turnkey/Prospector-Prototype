@@ -136,20 +136,30 @@ IQR_Outlier_Threshhold <- 4 #typically 2-4
 ORIGINAL %<>%
   filter(!Spend_1.log %in% boxplot.stats(Spend_1.log,coef = IQR_Outlier_Threshhold)$out)
 
-# Impute missings ---------------------------------------------------------
+# Impute missings and set task ---------------------------------------------------------
 
-ORIGINAL %<>%
-  removeConstantFeatures(perc = .05) %>%
-  impute(classes = list(numeric = imputeMean(), integer = imputeMean(), factor = imputeMode())) %>%
+O.log.impute <- ORIGINAL %>%
+  select(-Spend_1) %>%
+  makeRegrTask(
+    data = .,
+    target = "Spend_1.log",
+    id = "Log of Spend"
+    ) %>%
+  mergeSmallFactorLevels(min.perc = 0.01) %>%
+  removeConstantFeatures(perc = 0.01) %>%
+  impute(
+    classes = list(
+      numeric = imputeLearner("regr.rpart"),
+      integer = imputeMean(),
+      factor = imputeLearner("classif.rpart")
+      )
+    )
+
+O.log.task <- O.log.impute %>%
   .[[1]] %>%
-  createDummyFeatures(method = "reference") %>%
-  select(-Spend_1)
+  createDummyFeatures(method = "reference")
 
-# Set task ----------------------------------------------------------------
-
-O.log.task <- makeRegrTask(data = ORIGINAL,
-                           target = "Spend_1.log",
-                           id = "Log of Spend")
+str(O.log.task)
 
 # Set learner -------------------------------------------------------------
 
@@ -159,7 +169,7 @@ xgb.lrn <- makeLearner("regr.xgboost",
 
 # Tune learner ------------------------------------------------------------
 
-CV.tune_setting = makeResampleDesc("CV", iters = 3)
+CV.tune_setting = makeResampleDesc("CV", iters = 4)
 
 ### xgboost tuning ### (long run time)
 
@@ -172,7 +182,7 @@ params <- makeParamSet(makeIntegerParam("max_depth",lower = 5L,upper = 10L),
                        makeNumericParam("eta",lower = 0.01,upper = 0.2),
                        makeNumericParam("colsample_bytree",lower = 0.5,upper = 1),
                        makeIntegerParam("nrounds",lower = 100L,upper = 300L),
-                       makeDiscreteParam("gamma",values = c(0,0.1)))
+                       makeNumericParam("gamma",lower = 0,upper = 0.2))
 
 # try a seperate gamma tuning after params are established
 
@@ -192,6 +202,16 @@ xgb.tune <- tuneParams(learner = xgb.lrn,
 
 parallelStop()
 
+save_tuning <- TRUE
+if (save_tuning) {
+  saveRDS(xgb.tune, file = "xgb.tune.rds")
+}
+
+import_tuning <- FALSE
+if (import_tuning) {
+  xgb.tune <- readRDS(file = "xgb.tune.rds")
+}
+
 xgb.tuned.lrn <- setHyperPars(xgb.lrn, par.vals = xgb.tune$x)
 
 # Train model -------------------------------------------------------------
@@ -202,3 +222,127 @@ parallelStartSocket(cpus = detectCores())
 trained_model = train(xgb.tuned.lrn, O.log.task)
 
 parallelStop()
+
+# Prepare data for scoring -----------------------------------------------
+
+SCORING <- read_csv("prepped.csv")
+
+names(SCORING) <- gsub(" ", "_", names(SCORING))
+names(SCORING) <- make.names(names(SCORING), unique = TRUE)
+
+SCORING %<>%
+  filter(Is_Valid_Abilitec_ID == 1) %>%
+  filter(Abilitec_Age <= 365 & Abilitec_Age >= 0) %>%
+  filter(Turnkey_Standard_Bundle_Age <= 365 & Turnkey_Standard_Bundle_Age >= 0) %>%
+  filter(Spend_1 > 0) %>%
+  select(-X1,
+         -Spend_2,
+         -ProspectID,
+         -Tenure_1,
+         -Tenure_2,
+         -Planholder_1,
+         -Planholder_2,
+         -RecordCount_1,
+         -RecordCount_2,
+         -Abilitec_ID,
+         -Abilitec_ID_Append_Date,
+         -Abilitec_Age,
+         -Acxiom_Consumer_Append_Date,
+         -Turnkey_Standard_Bundle_Age,
+         -Turnkey_Standard_Bundle_Date,
+         -Adult_Age_Ranges_Present_in_Household,
+         -Apartment_Number,
+         -Children.s_Age_Ranges_Present_in_Household,
+         -First_Name,
+         -First_Name_._1st_Individual,
+         -First_Name_._2nd_Individual,
+         -Household_Abilitec_ID,
+         -InfoBase_Positive_Match_Indicator,
+         -Mail_Order_Buyer_Categories,
+         -Email,
+         -Last_Name,
+         -Postal_Code,
+         -Ticketing_System_Account_ID,
+         -Ticket_History_File_RecID,
+         -ZipCode,
+         -Is_Valid_Abilitec_ID,
+         -Middle_Initial_._1st_Individual,
+         -Middle_Initial_._2nd_Individual,
+         -Name_._Gender_._1st_Individual,
+         -Name_._Gender_._2nd_Individual,
+         -Vehicle_._Truck.Motorcycle.RV_Owner,
+         -Base_Record_Verification_Date,
+         -Retail_Activity_Date_of_Last,
+         -Credit_Card_Indicator,
+         -Precision_Level,
+         -Number_of_Sources,
+         -Overall_Match_Indicator,
+         -Occupation_._Detail_._Input_Individual,
+         -Age_00_._02_Female:-Age_16_._17_Unknown_Gender, # Confirm that these ":" will remain in position for all files
+         -Females_18.24:-Females_75.,
+         -Males_18.24:-Males_75.,
+         -Unknown_Gender_18.24:-Unknown_Gender_75.,
+         -Business_Owner_._Accountant:-Vehicle_._Dominant_Lifestyle_Indicator_._Regular_Classification_.Mid.size_._Small.,
+         -Purchase_0_._3_Months:-Purchase_7_._9_Months,
+         -Retail_Purchases_._Categories,
+         -Suppression_._Mail_._DMA,
+         -Vehicle_._New_Used_Indicator_._1st_Vehicle,
+         -Vehicle_._New_Used_Indicator_._2nd_Vehicle,
+         -Personicx_Cluster_Code,
+         -Personicx_Digital_Cluster_Code)
+
+# Set missing data
+
+SCORING[SCORING == -1] <- NA
+SCORING[SCORING == "-1"] <- NA
+SCORING[SCORING == -2] <- 0
+
+# Special variable formatting
+
+SCORING %<>%
+  mutate(Business_Owner = ifelse(is.na(Business_Owner), -1, Business_Owner))
+
+SCORING %<>%
+  separate(Retail_Activity_Date_of_Last, c(4,6), into = c("RA_Year", "RA_Month", "RA_remove")) %>%
+  mutate(RA_Year = as.numeric(RA_Year)) %>%
+  mutate(RA_Month = as.numeric(RA_Month)) %>%
+  mutate(Retail_Activity_Months_Since = (year(now()) - RA_Year)*12 + RA_Month) %>%
+  select(-RA_remove,-RA_Year,-RA_Month)
+
+# Format variable types
+
+SCORING %<>%
+  mutate(Business_Owner = as.factor(Business_Owner)) %>%
+  mutate(PersonicX_Cluster = as.factor(PersonicX_Cluster)) %>%
+  mutate(PersonicX_Digital_Cluster = as.factor(PersonicX_Digital_Cluster)) %>%
+  mutate(Education_._Input_Individual = as.factor(Education_._Input_Individual)) %>%
+  mutate(Education_._1st_Individual = as.factor(Education_._1st_Individual)) %>%
+  mutate(Education_._2nd_Individual = as.factor(Education_._2nd_Individual)) %>%
+  mutate(Home_Property_Type = as.factor(Home_Property_Type)) %>%
+  mutate(Occupation_._Input_Individual = as.factor(Occupation_._Input_Individual)) %>%
+  mutate(Occupation_._1st_Individual = as.factor(Occupation_._1st_Individual)) %>%
+  mutate(Occupation_._2nd_Individual = as.factor(Occupation_._2nd_Individual)) %>%
+  mutate(Retail_Purchases_._Most_Frequent_Category = as.factor(Retail_Purchases_._Most_Frequent_Category)) %>%
+  mutate(Vehicle_._Dominant_Lifestyle_Indicator = as.factor(Vehicle_._Dominant_Lifestyle_Indicator)) %>%
+  mutate(Personicx_Group_Number = as.factor(Personicx_Group_Number)) %>%
+  mutate(Personicx_Digital_Group_Number = as.factor(Personicx_Digital_Group_Number)) %>%
+  mutate(Race_Code = as.factor(Race_Code)) %>%
+  mutate(County = as.factor(County))
+
+# Create log spend variables
+# Spend tends to be a power law distribution so this normalizes the target variable
+SCORING.reimp <- SCORING %>%
+  select(one_of(names(ORIGINAL))) %>%
+  select(-Spend_1) %>%
+  reimpute(O.log.impute[[2]]) %>% # Might need to explore impute with dummies to get an identical reimpute
+  select_if(anyNA)
+#  select_if(function(col) !anyNA(col)) %>%
+#  createDummyFeatures(method = "reference")
+
+any(is.na(SCORING))
+any(is.na(SCORING.reimp))
+  
+impute.test.data <- getTaskData(O.log.impute[[1]])
+summary(impute.test.data$County)
+summary(SCORING.reimp$County)
+
