@@ -136,36 +136,30 @@ IQR_Outlier_Threshhold <- 4 #typically 2-4
 ORIGINAL %<>%
   filter(!Spend_1.log %in% boxplot.stats(Spend_1.log,coef = IQR_Outlier_Threshhold)$out)
 
-# Impute missings and set task ---------------------------------------------------------
+# Set task ---------------------------------------------------------
 
-O.log.impute <- ORIGINAL %>%
+O.log.task<- ORIGINAL %>%
   select(-Spend_1) %>%
   makeRegrTask(
     data = .,
     target = "Spend_1.log",
-    id = "Log of Spend"
-    ) %>%
-  mergeSmallFactorLevels(min.perc = 0.01) %>%
-  removeConstantFeatures(perc = 0.01) %>%
-  impute(
-    classes = list(
-      numeric = imputeLearner("regr.rpart"),
-      integer = imputeMean(),
-      factor = imputeLearner("classif.rpart")
-      )
-    )
-
-O.log.task <- O.log.impute %>%
-  .[[1]] %>%
-  createDummyFeatures(method = "reference")
-
-str(O.log.task)
+    id = "Log-normal Spend"
+  ) %>%
+  createDummyFeatures() %>%
+  removeConstantFeatures(perc = 0.01, na.ignore = TRUE) %>%
+  removeConstantFeatures(perc = 0.01, na.ignore = FALSE)
 
 # Set learner -------------------------------------------------------------
 
-xgb.lrn <- makeLearner("regr.xgboost",
-                       nthread = detectCores(),
-                       id = "xgboost")
+xgb.meanimpute.lrn <- makeImputeWrapper(
+  makeLearner("regr.xgboost",
+              nthread = detectCores(),
+              id = "xgboost.meanimpute"),
+  classes = list(
+    numeric = imputeMean(),
+    integer = imputeMean()
+  )
+)
 
 # Tune learner ------------------------------------------------------------
 
@@ -187,12 +181,13 @@ params <- makeParamSet(makeIntegerParam("max_depth",lower = 5L,upper = 10L),
 # try a seperate gamma tuning after params are established
 
 # establish an appropriate number of instances and times to run
-ctrl.rand <- makeTuneControlRandom(maxit = 12)
+ctrl.rand <- makeTuneControlRandom(maxit = 3)
+ctrl.irace <- makeTuneControlIrace(maxExperiments = 200L)
 
 # Run tuning
 parallelStartSocket(cpus = detectCores())
 
-xgb.tune <- tuneParams(learner = xgb.lrn,
+xgb.tune <- tuneParams(learner = xgb.meanimpute.lrn,
                        task = O.log.task,
                        resampling = CV.tune_setting,
                        measures = rmse,
@@ -212,7 +207,7 @@ if (import_tuning) {
   xgb.tune <- readRDS(file = "xgb.tune.rds")
 }
 
-xgb.tuned.lrn <- setHyperPars(xgb.lrn, par.vals = xgb.tune$x)
+xgb.tuned.lrn <- setHyperPars(xgb.impute.lrn, par.vals = xgb.tune$x)
 
 # Train model -------------------------------------------------------------
 
@@ -331,18 +326,42 @@ SCORING %<>%
 
 # Create log spend variables
 # Spend tends to be a power law distribution so this normalizes the target variable
-SCORING.reimp <- SCORING %>%
-  select(one_of(names(ORIGINAL))) %>%
-  select(-Spend_1) %>%
-  reimpute(O.log.impute[[2]]) %>% # Might need to explore impute with dummies to get an identical reimpute
-  select_if(anyNA)
-#  select_if(function(col) !anyNA(col)) %>%
-#  createDummyFeatures(method = "reference")
+SCORING %<>%
+#  select(-Spend_1) %>%
+  select_if(function(col) !all(is.na(col))) %>%
+  createDummyFeatures() %>%
+#  select(one_of(names(getTaskData(O.log.task))))
 
-any(is.na(SCORING))
-any(is.na(SCORING.reimp))
-  
-impute.test.data <- getTaskData(O.log.impute[[1]])
-summary(impute.test.data$County)
-summary(SCORING.reimp$County)
 
+
+# Predict -----------------------------------------------------------------
+
+PREDICTION <- SCORING %>%
+  bind_cols(predict(trained_model, newdata = SCORING)$data)
+
+PREDICTION %<>%
+  mutate(Spend_1.predicted = 10^response) %>%
+  mutate(bin_num.20.40.60.80.predicted = factor(ntile(response, 5))) %>%
+  mutate(bin_num.20.40.60.80.actual = factor(ntile(Spend_1, 5))) %>%
+  mutate(bin_num.30.60.80.90.predicted = factor(ntile(response, 10))) %>%
+  mutate(bin_num.30.60.80.90.predicted = fct_collapse(bin_num.30.60.80.90.predicted,
+                                                      "1" = c("1","2","3"),
+                                                      "2" = c("4","5","6"),
+                                                      "3" = c("7","8"),
+                                                      "4" = "9",
+                                                      "5" = "10")) %>%
+  mutate(bin_num.30.60.80.90.actual = factor(ntile(Spend_1, 10))) %>%
+  mutate(bin_num.30.60.80.90.actual = fct_collapse(bin_num.30.60.80.90.actual,
+                                                   "1" = c("1","2","3"),
+                                                   "2" = c("4","5","6"),
+                                                   "3" = c("7","8"),
+                                                   "4" = "9",
+                                                   "5" = "10")) %>%
+  mutate(bin_num.5percentile.predicted = factor(ntile(Spend_1, 20))) %>%
+  mutate(bin_num.5percentile.actual = factor(ntile(Spend_1, 20)))
+
+bin_mse <- mean((as.numeric(PREDICTION[["bin_num.30.60.80.90.actual"]]) - as.numeric(PREDICTION[["bin_num.30.60.80.90.predicted"]]))^2)
+print(bin_mse)
+
+bin_rmse <- sqrt(mean((as.numeric(PREDICTION[["bin_num.30.60.80.90.actual"]]) - as.numeric(PREDICTION[["bin_num.30.60.80.90.predicted"]]))^2))
+print(bin_rmse)
